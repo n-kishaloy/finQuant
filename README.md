@@ -1,4 +1,4 @@
-# financelib
+# finQuant
 
 ## Motivation
 The library was created to be a reasonably complete package for all major financial formulas used in Finance. The codes are all in *pure* Haskell. It encompasses most of the common area of *Finance* - *Accounts, Balance Sheets, Equity, Bonds, Derivatives, Free Cash Flows, Valuations etc*

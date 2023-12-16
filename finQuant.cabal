@@ -52,12 +52,44 @@ extra-doc-files:    CHANGELOG.md
 -- Extra source files to be distributed with the package, such as examples, or a tutorial module.
 -- extra-source-files:
 
-common warnings
-    ghc-options: -Wall
+common common-settings
+    default-language: GHC2021
+    ghc-options:
+        -Wall
+    build-depends:
+        base
+        , approx
+        , mtl
+        , containers
+        , hashable
+        , lens
+        , generic-lens
+        , text
+        , time
+        , unordered-containers
+        , vector
+        , hashable
+        , cassava
+        , bytestring
+        , hframes
+        , Chart
+        , Chart-diagrams
+        , diagrams
+    default-extensions:
+        DuplicateRecordFields
+        , OverloadedLabels
+        , NoFieldSelectors
+        , OverloadedRecordDot
+        , DisambiguateRecordFields
+        , StrictData
+        , OverloadedLists
+        , OverloadedStrings
+        , DataKinds
+
 
 library
     -- Import common warning flags.
-    import:           warnings
+    import:           common-settings
 
     -- Modules exported by the library.
     exposed-modules:  MyLib
@@ -69,20 +101,17 @@ library
     -- other-extensions:
 
     -- Other library packages from which modules are imported.
-    build-depends:    base ^>=4.17.2.0
+    build-depends:  
+          
 
     -- Directories containing source files.
     hs-source-dirs:   src
 
-    -- Base language which the package is written in.
-    default-language: GHC2021
 
 test-suite finQuant-test
     -- Import common warning flags.
-    import:           warnings
+    import:           common-settings
 
-    -- Base language which the package is written in.
-    default-language: GHC2021
 
     -- Modules included in this executable, other than Main.
     -- other-modules:
@@ -101,5 +130,4 @@ test-suite finQuant-test
 
     -- Test dependencies.
     build-depends:
-        base ^>=4.17.2.0,
         finQuant
