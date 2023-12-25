@@ -93,6 +93,17 @@ library
     exposed-modules:  
         Finance
         Finance.Derivatives
+        Finance.Derivatives.Forwards
+        Finance.Derivatives.Options
+        Finance.Derivatives.Swaps
+        Finance.FixedIncomes
+        Finance.Statements
+        Finance.Valuations
+        Finance.FixedIncomes.Bonds
+        Finance.FixedIncomes.Bonds.Rates
+        Finance.FixedIncomes.Bonds.Durations
+        Finance.FixedIncomes.MoneyMarkets
+
 
     build-depends:  
 

@@ -1,3 +1,17 @@
+-- |
+-- Implement Base modules for the FinQuant library
+--
+-- Module      : Finance <br>
+-- Copyright   : (c) 2024 Kishaloy Neogi <br>
+-- License     : MIT <br>
+-- Maintainer  : Kishaloy Neogi <br>
+-- Email       : <nkishaloy@yahoo.com>
+--
+-- The module describes the base modules of Finance like npv,xnpv,irr,xirr,time value of money etc.
+--
+-- PV is mentioned as PV, Future value as FV and Terminal value as TV
+--
+-- You may see the github repository at <https://github.com/n-kishaloy/finQuant>
 module Finance
   ( yearFrac,
     DayCountConvention (..),

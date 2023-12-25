@@ -26,6 +26,7 @@ main :: IO ()
 main = do
   qCheck ("Test" :: Text) True
 
+  print ("## Finance " :: Text)
   qTest
     ("YearFrac" :: Text)
     [ ( ( \(dt0, dt1) ->
