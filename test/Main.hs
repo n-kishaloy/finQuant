@@ -1,11 +1,15 @@
 module Main (main) where
 
-import Data.Approx
+import Data.Approx (Approx ((=~)))
+import Data.HashMap.Strict qualified as Hm
 import Data.List (foldl')
 import Data.Text (Text)
 import Data.Time (Day, fromGregorian)
 import Finance (DayCountConvention (..), yearFrac)
 import Finance qualified as F
+import Finance.FixedIncomes.Bonds as B
+import Finance.FixedIncomes.Bonds.Rates qualified as Rt
+import Finance.Statements qualified as St
 
 qTest :: (Show a) => a -> [Bool] -> IO ()
 qTest nam x = putStrLn $ lJus 30 '.' nam ++ " => Tests :" ++ rJus 3 ' ' (p + f) ++ fl f
@@ -26,7 +30,7 @@ main :: IO ()
 main = do
   qCheck ("Test" :: Text) True
 
-  print ("## Finance " :: Text)
+  print ("Finance" :: Text)
   qTest
     ("YearFrac" :: Text)
     [ ( ( \(dt0, dt1) ->
@@ -96,7 +100,9 @@ main = do
     ("Discount factor" :: Text)
     [ F.disFact 0.09 3.0 =~ 0.7721834800610642,
       F.xdisFact 0.09 (fromGregorian 2015 3 15, fromGregorian 2018 10 8) =~ 0.7355566392384189,
-      F.forwardRate (0.07, 1.0) (0.09, 3.0) =~ 0.8262363236653387
+      F.forwardRate (0.07, 1.0) (0.09, 3.0) =~ 0.8262363236653387,
+      F.nomEffRate (F.effNomRate 0.08 4.0) 4.0 =~ 0.08,
+      F.effNomRate (F.nomEffRate 0.08 2.0) 2.0 =~ 0.08
     ]
 
   qTest
@@ -133,3 +139,105 @@ main = do
         [-115.0, 5.0, 25.0, -10.0, 200.0]
         =~ Just 0.27845538159261773
     ]
+
+  let ep =
+        Rt.NominalRateCurve
+          { rate = [0.05, 0.06, 0.07, 0.08],
+            freq = 2.0
+          }
+
+  let et =
+        Rt.NominalRateCurve
+          { rate = [0.0016, 0.0021, 0.0027, 0.0033, 0.0037, 0.0041],
+            freq = 2.0
+          }
+
+  let er = et.toEffective
+  let en = er.toNominal
+
+  qTest
+    ("Rate curves" :: Text)
+    [ ep.rateEstimate 1.5 =~ 0.07,
+      ep.rateEstimate 1.2 == 0.064,
+      en.rate =~ et.rate
+    ]
+
+  let rx = [0.020000, 0.024000, 0.027600, 0.030840, 0.033756, 0.036380]
+  let ew =
+        Rt.ParRates
+          { rate =
+              Rt.NominalRateCurve
+                { rate = rx,
+                  freq = 2.0
+                }
+          }
+
+  let ey = ew.toSpot
+  -- let fy = ew.toSpote
+
+  -- print ey
+  -- print fy
+
+  let eq = ey.toPar
+
+  -- let Rt.SpotRates {rate = Rt.NominalRateCurve {rate = rt}} = ey
+  rt <- case ey of
+    Rt.SpotRates {rate = Rt.NominalRateCurve {rate = ry}} -> return ry
+    _ -> error "Not implemented"
+
+  rp <- case eq of
+    Rt.ParRates {rate = Rt.NominalRateCurve {rate = ry}} -> return ry
+    _ -> error "Not implemented"
+
+  -- print rt
+
+  let rq =
+        Rt.SpotRates
+          { rate =
+              Rt.NominalRateCurve
+                { rate = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0365, 0.0, 0.0418],
+                  freq = 2.0
+                }
+          }
+
+  qTest
+    ("Rates" :: Text)
+    [ rt =~ [2.0e-2, 2.4024047953330907e-2, 2.7668566429104757e-2, 3.0973763781325214e-2, 3.397441792873934e-2, 3.6700426487687565e-2],
+      rp =~ rx,
+      rq.forwardRate 3.0 1.0 =~ 0.057782903318259304
+    ]
+
+  let cb = B.CouponBond {t_life = 3.0, par = 100.0, freq = 2.0, c = 0.05}
+  let cd = B.CouponBond {t_life = 9.0, par = 100.0, freq = 2.0, c = 0.05}
+
+  qTest
+    ("Bonds" :: Text)
+    [ cb.price 0.03 =~ 105.6971871654752,
+      cb.ytm 113.69147941993403 =~ 0.004038639185260602,
+      cb.priceRateCurve
+        ( Rt.NominalRateCurve
+            { rate = [0.0016, 0.0021, 0.0027, 0.0033, 0.0037, 0.0041],
+              freq = 2.0
+            }
+        )
+        =~ 113.69147941993403,
+      cb.accruedInterest (88.0 / 362.0) =~ 1.2154696132596685,
+      cd.pvFull 0.048 (88.0 / 362.0) =~ 102.62432259347733,
+      cd.pvFlat 0.048 (88.0 / 362.0) =~ 101.40885298021766,
+      B.FloatingRateNotes {quotedMargin = 0.005, t_life = 2.0, par = 100.0, freq = 2.0}.price 0.0125 0.004 =~ 100.19594209266003,
+      B.FloatingRateNotes {quotedMargin = 0.0075, t_life = 5.0, par = 100.0, freq = 4.0}.discountMargin 95.50 0.011 =~ 0.017180561798632237
+    ]
+
+  qTest
+    ("Statements" :: Text)
+    [ St.isCalc St.Inventories,
+      St.isCalc St.EAT,
+      St.debitType Hm.! St.InterestPayable == St.LiabilityEntry,
+      St.debitType Hm.! St.OtherTangibleAssets == St.AssetEntry,
+      St.debitType Hm.! St.AccumulatedAmortization == St.AssetContra,
+      St.debitType Hm.! St.CommonStock == St.EquityEntry,
+      St.debitType Hm.! St.DeferredCompensation == St.LiabilityEntry,
+      St.debitType Hm.! St.AccumulatedDepreciation == St.AssetContra
+    ]
+
+  print ("Bye" :: Text)

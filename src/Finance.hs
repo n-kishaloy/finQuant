@@ -37,6 +37,8 @@ module Finance
     irr,
     xirr,
     yearFracVec,
+    effNomRate,
+    nomEffRate,
   )
 where
 
@@ -244,3 +246,15 @@ irr ti cf = newtRaph (\r -> npvT r ti cf) 0.1 1e-6
 -- - cf  = vector of corresponding cash flows
 xirr :: V.Vector Day -> U.Vector Double -> Maybe Double
 xirr di = irr (yearFracVec US30360 di (di V.! 0))
+
+-- | Nominal rate of return for multiple compounding per period
+-- - r = effective rate of return in a period
+-- - m = number of compounding per period
+effNomRate :: Double -> Double -> Double
+effNomRate r m = ((1.0 + r) ** (1.0 / m) - 1.0) * m
+
+-- | Effective rate of return for multiple compounding per period
+-- - r = nominal rate of return in a period
+-- - m = number of compounding per period
+nomEffRate :: Double -> Double -> Double
+nomEffRate r m = (1.0 + r / m) ** m - 1.0
