@@ -22,7 +22,7 @@ Kishaloy Neogi
 ## License
 The library is distributed under the MIT License.
 
-Copyright (c) 2023 Kishaloy Neogi
+Copyright (c) 2024 Kishaloy Neogi
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
