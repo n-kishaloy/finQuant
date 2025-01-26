@@ -2,3 +2,6 @@ packages:
     .
     ../approx/
     ../hframes/
+
+constraints:
+  zlib +bundled-c-zlib

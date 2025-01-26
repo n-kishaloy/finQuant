@@ -117,7 +117,7 @@ instance HasField "price" FloatingRateNotes (Double -> Double -> Double) where
     F.pvAnnuity
       ((idxRate + discountMargin) / fp.freq)
       (fp.t_life * fp.freq)
-      (-(fp.quotedMargin + idxRate) * fp.par / fp.freq)
+      (-((fp.quotedMargin + idxRate) * fp.par / fp.freq))
       0.0
       + F.pv
         ((idxRate + discountMargin) / fp.freq)

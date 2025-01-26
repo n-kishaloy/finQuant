@@ -198,9 +198,9 @@ xfv r pr = fv r (yrFrac pr)
 -- - p  = PV of Annuity
 -- - f  = FV of Residual value that may be received
 pmt :: Double -> Double -> Double -> Double -> Double
-pmt r n p f = -(p + f / rn) * r / (1.0 - 1.0 / rn)
-  where
-    rn = (1.0 + r) ** n
+pmt r n p f =
+  let rn = (1.0 + r) ** n
+   in -((p + f / rn) * r / (1.0 - 1.0 / rn))
 
 -- | PV of an annuity
 -- - r   = rate of return per period
@@ -208,9 +208,9 @@ pmt r n p f = -(p + f / rn) * r / (1.0 - 1.0 / rn)
 -- - pm  = payment made in each transaction
 -- - f  = FV of Residual value that may be received
 pvAnnuity :: Double -> Double -> Double -> Double -> Double
-pvAnnuity r n pm f = -pm / r * (1.0 - 1.0 / rn) - f / rn
-  where
-    rn = (1.0 + r) ** n
+pvAnnuity r n pm f =
+  let rn = (1.0 + r) ** n
+   in -(pm / r * (1.0 - 1.0 / rn)) - f / rn
 
 -- | NPV of cash flows against time given in periods @ time = 0.0
 -- - r   = rate of return across the periods
