@@ -21,13 +21,18 @@
 module Finance.Statements
   ( FinType (..),
     BsType (..),
+    BsMap,
     PlType (..),
+    PlMap,
     CfType (..),
+    CfMap,
     debitType,
     BalanceSheetEntry (..),
+    transact,
   )
 where
 
+import Data.Approx ((=~))
 import Data.HashMap.Strict qualified as Hm
 import Data.HashSet qualified as Hs
 import Data.Hashable (Hashable)
@@ -37,16 +42,19 @@ import Data.Vector qualified as V
 import GHC.Generics (Generic)
 import GHC.Records (HasField (..))
 
+calcNode :: (Hashable a) => Hm.HashMap a Double -> [a] -> [a] -> Double
+calcNode h y0 y1 =
+  let adder q = foldl' (\t w -> t + Hm.lookupDefault 0.0 w q) 0.0
+   in adder h y0 - adder h y1
+
+finMapAdd :: (Hashable a) => Double -> a -> Hm.HashMap a Double -> Hm.HashMap a Double
+finMapAdd y z h = if y =~ 0.0 then Hm.delete z h else Hm.insert z y h
+
 class (Show a, Eq a, Hashable a, Ord a, Enum a) => FinType a where
   -- | @calcElem x h = Calculate and set the derived items in statements@
   --   The calulated elements includes Current Assets, Assets, Equity,
   calcElem :: Hm.HashMap a Double -> Hm.HashMap a Double
-  calcElem p = foldl' (\h (z, (y0, y1)) -> saAdd z y0 y1 h) p calcComb
-    where
-      saAdd z y0 y1 h =
-        let y = adder h y0 - adder h y1
-            adder q = foldl' (\t w -> t + Hm.lookupDefault 0.0 w q) 0.0
-         in if abs y < 1e-5 then Hm.delete z h else Hm.insert z y h
+  calcElem p = foldl' (\h (z, (s, t)) -> finMapAdd (calcNode h s t) z h) p calcComb
 
   calcComb :: [(a, ([a], [a]))]
 
@@ -76,7 +84,11 @@ class (Show a, Eq a, Hashable a, Ord a, Enum a) => FinType a where
   scaleMap :: Double -> Hm.HashMap a Double -> Hm.HashMap a Double
   scaleMap r x = Hm.fromList $ (\(k, v) -> (k, v * r)) <$> Hm.toList x
 
-  commonSize :: Maybe (Hm.HashMap a Double) -> Maybe (Hm.HashMap a Double)
+  clean :: Hm.HashMap a Double -> Hm.HashMap a Double
+  clean = Hm.filter (=~ 0.0)
+
+  commonSize :: Double -> Maybe (Hm.HashMap a Double) -> Maybe (Hm.HashMap a Double)
+  commonSize xdiv p = p >>= \x -> return $ (/ xdiv) <$> x
 
 data BsType
   = Cash
@@ -347,9 +359,6 @@ instance FinType BsType where
       (BalanceSheetCheck, ([Assets], [Liabilities, Equity]))
     ]
 
-  commonSize :: Maybe (Hm.HashMap BsType Double) -> Maybe (Hm.HashMap BsType Double)
-  commonSize = error "Not implemented"
-
 instance FinType PlType where
   calcComb :: [(PlType, ([PlType], [PlType]))]
   calcComb =
@@ -420,9 +429,6 @@ instance FinType PlType where
       )
     ]
 
-  commonSize :: Maybe (Hm.HashMap PlType Double) -> Maybe (Hm.HashMap PlType Double)
-  commonSize = error "Not implemented"
-
 instance FinType CfType where
   calcComb :: [(CfType, ([CfType], [CfType]))]
   calcComb =
@@ -481,9 +487,6 @@ instance FinType CfType where
         )
       )
     ]
-
-  commonSize :: Maybe (Hm.HashMap CfType Double) -> Maybe (Hm.HashMap CfType Double)
-  commonSize = error "Not implemented"
 
 cashFlowBalanceSheet :: [(CfType, ([BsType], [BsType]))]
 cashFlowBalanceSheet =
@@ -627,3 +630,33 @@ debitType =
   debitMapping Equity EquityEntry EquityContra $
     debitMapping Liabilities LiabilityEntry LiabilityContra $
       debitMapping Assets AssetEntry AssetContra Hm.empty
+
+type BsMap = Hm.HashMap BsType Double
+
+type PlMap = Hm.HashMap PlType Double
+
+type CfMap = Hm.HashMap CfType Double
+
+type Transaction = (BsType, BsType, Double)
+
+debit :: BsMap -> BsType -> Double -> BsMap
+debit hm tp val =
+  if isCalc tp
+    then error "Calculated value"
+    else
+      let pos = Hm.insertWith (+) tp val hm
+          neg = Hm.insertWith (+) tp (-val) hm
+       in case debitType Hm.! tp of
+            AssetEntry -> pos
+            LiabilityContra -> pos
+            EquityContra -> pos
+            _ -> neg
+
+credit :: BsMap -> BsType -> Double -> BsMap
+credit hm tp val = debit hm tp (-val)
+
+transact :: BsMap -> Transaction -> BsMap
+transact hm (deb, crd, val) = credit (debit hm deb val) crd val
+
+transactList :: BsMap -> [Transaction] -> BsMap
+transactList = foldl' transact

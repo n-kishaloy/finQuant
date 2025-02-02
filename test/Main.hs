@@ -237,7 +237,8 @@ main = do
       St.debitType Hm.! St.AccumulatedAmortization == St.AssetContra,
       St.debitType Hm.! St.CommonStock == St.EquityEntry,
       St.debitType Hm.! St.DeferredCompensation == St.LiabilityEntry,
-      St.debitType Hm.! St.AccumulatedDepreciation == St.AssetContra
+      St.debitType Hm.! St.AccumulatedDepreciation == St.AssetContra,
+      Hm.lookup St.LongTermLiabilities St.debitType == Nothing
     ]
 
   print ("Bye" :: Text)
