@@ -26,19 +26,32 @@ module Finance.Statements
     PlMap,
     CfType (..),
     CfMap,
+    FinOthersTyp (..),
+    FinOthMap,
     debitType,
     BalanceSheetEntry (..),
     transact,
+    transactList,
+    calcCashFlow,
+    Param (..),
+    BalanceSheet (..),
+    ProfitLoss (..),
+    CashFlow (..),
+    FinOthers (..),
+    FinancialReport (..),
   )
 where
 
 import Data.Approx ((=~))
+import Data.Function ((&))
 import Data.HashMap.Strict qualified as Hm
 import Data.HashSet qualified as Hs
 import Data.Hashable (Hashable)
 import Data.List (foldl')
-import Data.Time (Day, defaultTimeLocale, fromGregorian, parseTimeM, toGregorian)
+import Data.Map.Strict qualified as Bm
+import Data.Time (Day)
 import Data.Vector qualified as V
+import Finance as F
 import GHC.Generics (Generic)
 import GHC.Records (HasField (..))
 
@@ -89,6 +102,10 @@ class (Show a, Eq a, Hashable a, Ord a, Enum a) => FinType a where
 
   commonSize :: Double -> Maybe (Hm.HashMap a Double) -> Maybe (Hm.HashMap a Double)
   commonSize xdiv p = p >>= \x -> return $ (/ xdiv) <$> x
+
+  infixl 9 !~
+  (!~) :: Hm.HashMap a Double -> a -> Double
+  (!~) h k = Hm.lookupDefault 0.0 k h
 
 data BsType
   = Cash
@@ -488,8 +505,8 @@ instance FinType CfType where
       )
     ]
 
-cashFlowBalanceSheet :: [(CfType, ([BsType], [BsType]))]
-cashFlowBalanceSheet =
+cfBL :: [(CfType, ([BsType], [BsType]))]
+cfBL =
   [ ( ChangeCurrentAssets,
       ( [ CurrentReceivables,
           CurrentLoans,
@@ -577,8 +594,8 @@ cashFlowBalanceSheet =
     (OtherCashFlowFinancing, ([MinorityInterests], []))
   ]
 
-cashFlowProfitLoss :: [(CfType, ([PlType], [PlType]))]
-cashFlowProfitLoss =
+cfPL :: [(CfType, ([PlType], [PlType]))]
+cfPL =
   [ (CashFlowInterests, ([InterestExpense, CostDebt], [])),
     (CashFlowDividends, ([Dividends], [])),
     ( AdjustmentsRetainedEarnings,
@@ -637,6 +654,8 @@ type PlMap = Hm.HashMap PlType Double
 
 type CfMap = Hm.HashMap CfType Double
 
+type FinOthMap = Hm.HashMap FinOthersTyp Double
+
 type Transaction = (BsType, BsType, Double)
 
 debit :: BsMap -> BsType -> Double -> BsMap
@@ -660,3 +679,113 @@ transact hm (deb, crd, val) = credit (debit hm deb val) crd val
 
 transactList :: BsMap -> [Transaction] -> BsMap
 transactList = foldl' transact
+
+deprTaxAdjust :: PlMap -> Double
+deprTaxAdjust pl = case pl Hm.!? TaxDepreciation of
+  Just x -> pl !~ Depreciation - x
+  _ -> 0.0
+
+-- | Derives the non-calc items of the Cash Flow statement from
+--  the beginning and ending Balance Sheets given as BsMap and Profit Loss statement
+--  given as PlMap.
+
+-- | Note that you have to still run the calc_elements function to compute the full
+--  Cash Flow statement. This function just provides an easy way to derive them of
+--  a Balance Sheet.
+calcCashFlow :: BsMap -> BsMap -> PlMap -> Double -> Double -> Double -> CfMap
+calcCashFlow b0 b1 pl corpTax gpTax revTax =
+  let cf0 =
+        foldl' (\h (z, (s, t)) -> 
+          finMapAdd (calcNode pl s t) z h) Hm.empty cfPL
+          & \cf -> foldl' (\h (z, (s, t)) -> 
+            finMapAdd (calcNode b1 s t - calcNode b0 s t) z h) cf cfBL
+      cfInt = cf0 !~ CashFlowInterests
+      ebitTx = corpTax * (pl !~ EBT + cfInt + deprTaxAdjust pl)
+      grTx = gpTax * pl !~ GrossProfit
+      revTx = revTax * pl !~ Revenue
+   in Hm.insert
+        CashFlowTaxShield
+        (min (corpTax * cfInt) (max 0.0 (ebitTx + grTx - revTx)))
+        cf0
+
+data Param = Param
+  { unlevered :: Double,
+    shieldTax :: Double,
+    equity :: Double,
+    debt :: Double,
+    valuation :: Double
+  }
+  deriving (Show)
+
+data BalanceSheet = BalanceSheet
+  { date :: Day,
+    value :: BsMap
+  }
+  deriving (Show)
+
+data ProfitLoss = ProfitLoss
+  { period :: F.Period,
+    value :: PlMap
+  }
+  deriving (Show)
+
+data CashFlow = CashFlow
+  { period :: F.Period,
+    value :: CfMap
+  }
+  deriving (Show)
+
+data FinOthers = FinOthers
+  { period :: F.Period,
+    value :: FinOthMap
+  }
+  deriving (Show)
+
+data FinancialReport = FinancialReport
+  { period :: F.Period,
+    balanceSheetBegin :: Maybe BsMap,
+    balanceSheetEnd :: Maybe BsMap,
+    profitLoss :: Maybe PlMap,
+    cashFlow :: Maybe CfMap,
+    others :: Maybe FinOthMap
+  }
+
+instance HasField "bal_Sheet_Begin" FinancialReport (Maybe BalanceSheet) where
+  getField :: FinancialReport -> Maybe BalanceSheet
+  getField fr =
+    fr.balanceSheetBegin >>= \bl ->
+      return BalanceSheet {date = fst fr.period, value = bl}
+
+instance HasField "bal_Sheet_End" FinancialReport (Maybe BalanceSheet) where
+  getField :: FinancialReport -> Maybe BalanceSheet
+  getField fr =
+    fr.balanceSheetEnd >>= \bl ->
+      return BalanceSheet {date = snd fr.period, value = bl}
+
+instance HasField "profit_loss_Stat" FinancialReport (Maybe ProfitLoss) where
+  getField :: FinancialReport -> Maybe ProfitLoss
+  getField fr =
+    fr.profitLoss >>= \pl -> return ProfitLoss {period = fr.period, value = pl}
+
+instance HasField "cash_flow_Stat" FinancialReport (Maybe CashFlow) where
+  getField :: FinancialReport -> Maybe CashFlow
+  getField fr =
+    fr.cashFlow >>= \cf -> return CashFlow {period = fr.period, value = cf}
+
+instance HasField "fin_others" FinancialReport (Maybe FinOthers) where
+  getField :: FinancialReport -> Maybe FinOthers
+  getField fr =
+    fr.others >>= \fo -> return FinOthers {period = fr.period, value = fo}
+
+instance HasField "eps" FinancialReport Double where
+  getField :: FinancialReport -> Double
+  getField _fr = error "Not implemented"
+
+instance HasField "diluted_eps" FinancialReport (Double -> Double -> Double -> Double -> Double -> Double) where
+  getField :: FinancialReport -> Double -> Double -> Double -> Double -> Double -> Double
+  getField _fr _earn _pref_div _shares _share_price _options =
+    error "Not implemented"
+
+instance HasField "currentRatio" FinancialReport Double where
+  getField :: FinancialReport -> Double
+  getField _fr = error "Not implemented"
