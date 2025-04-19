@@ -53,6 +53,7 @@ import Data.HashSet qualified as Hs
 import Data.Hashable (Hashable)
 import Data.List (foldl')
 import Data.Map.Strict qualified as Bm
+import Data.Maybe (fromJust)
 import Data.Set qualified as St
 import Data.Time (Day)
 import Data.Vector qualified as V
@@ -900,12 +901,30 @@ instance HasField "setCashFlow" Accounts Accounts where
         addCF (pd : xs) cff = addCF xs $ calcCF pd cff
      in ac & #cashFlow .~ addCF (Bm.keys ac.profitLoss) Bm.empty
 
+instance HasField "getAccount" Accounts (Period -> Maybe FinancialReport) where
+  getField :: Accounts -> Period -> Maybe FinancialReport
+  getField ac (d0, d1) = do
+    pl <- ac.profitLoss Bm.!? (d0, d1)
+    return
+      FinancialReport
+        { period = (d0, d1),
+          balanceSheetBegin = ac.balanceSheet Bm.!? d0,
+          balanceSheetEnd = ac.balanceSheet Bm.!? d1,
+          profitLoss = Just pl,
+          cashFlow = ac.cashFlow Bm.!? (d0, d1),
+          others = ac.others Bm.!? (d0, d1)
+        }
+
+instance HasField "toFinancialReports" Accounts [FinancialReport] where
+  getField :: Accounts -> [FinancialReport]
+  getField ac = fromJust . ac.getAccount <$> Bm.keys ac.profitLoss
+
 accountsfromStatements :: F.Currency -> Bool -> Bm.Map Day BsMap -> Bm.Map Period PlMap -> Bm.Map Period FinOthMap -> Maybe Accounts
 accountsfromStatements cur consol b0 pl fo = do
   let pd = Bm.keys pl
   let pds = St.fromList pd
   dts <- setDatesPeriod pd
-  return $
+  return
     Accounts
       { currency = cur,
         consolidated = consol,
@@ -914,4 +933,4 @@ accountsfromStatements cur consol b0 pl fo = do
         balanceSheet = Bm.restrictKeys b0 dts,
         cashFlow = Bm.empty,
         others = Bm.restrictKeys fo pds
-      }
+      }.setCashFlow
