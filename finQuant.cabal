@@ -85,6 +85,7 @@ common common-settings
         , OverloadedLists
         , OverloadedStrings
         , DataKinds
+        , DeriveAnyClass
 
 
 library

@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 -- | Module      : Finance.Statements
 -- Description : Implement __Statements__ modules for the __finz__ library
@@ -33,25 +33,31 @@ module Finance.Statements
     transact,
     transactList,
     calcCashFlow,
+    finReportFromStatements,
+    checkDates,
     Param (..),
     BalanceSheet (..),
     ProfitLoss (..),
     CashFlow (..),
     FinOthers (..),
     FinancialReport (..),
+    accountsfromStatements,
   )
 where
 
+import Control.Lens ((&), (.~))
 import Data.Approx ((=~))
-import Data.Function ((&))
+import Data.Generics.Labels ()
 import Data.HashMap.Strict qualified as Hm
 import Data.HashSet qualified as Hs
 import Data.Hashable (Hashable)
 import Data.List (foldl')
 import Data.Map.Strict qualified as Bm
+import Data.Set qualified as St
 import Data.Time (Day)
 import Data.Vector qualified as V
-import Finance as F
+import Finance (Period)
+import Finance qualified as F
 import GHC.Generics (Generic)
 import GHC.Records (HasField (..))
 
@@ -694,11 +700,14 @@ deprTaxAdjust pl = case pl Hm.!? TaxDepreciation of
 --  a Balance Sheet.
 calcCashFlow :: BsMap -> BsMap -> PlMap -> Double -> Double -> Double -> CfMap
 calcCashFlow b0 b1 pl corpTax gpTax revTax =
-  let cf0 =
-        foldl' (\h (z, (s, t)) -> 
-          finMapAdd (calcNode pl s t) z h) Hm.empty cfPL
-          & \cf -> foldl' (\h (z, (s, t)) -> 
-            finMapAdd (calcNode b1 s t - calcNode b0 s t) z h) cf cfBL
+  let cf0 = bf cfBL $ pf cfPL Hm.empty
+        where
+          pf [] h = h
+          pf ((z, (s, t)) : xs) h = pf xs (finMapAdd (calcNode pl s t) z h)
+
+          bf [] h = h
+          bf ((z, (s, t)) : xs) h = bf xs (finMapAdd (calcNode b1 s t - calcNode b0 s t) z h)
+
       cfInt = cf0 !~ CashFlowInterests
       ebitTx = corpTax * (pl !~ EBT + cfInt + deprTaxAdjust pl)
       grTx = gpTax * pl !~ GrossProfit
@@ -724,31 +733,32 @@ data BalanceSheet = BalanceSheet
   deriving (Show)
 
 data ProfitLoss = ProfitLoss
-  { period :: F.Period,
+  { period :: Period,
     value :: PlMap
   }
   deriving (Show)
 
 data CashFlow = CashFlow
-  { period :: F.Period,
+  { period :: Period,
     value :: CfMap
   }
   deriving (Show)
 
 data FinOthers = FinOthers
-  { period :: F.Period,
+  { period :: Period,
     value :: FinOthMap
   }
   deriving (Show)
 
 data FinancialReport = FinancialReport
-  { period :: F.Period,
+  { period :: Period,
     balanceSheetBegin :: Maybe BsMap,
     balanceSheetEnd :: Maybe BsMap,
     profitLoss :: Maybe PlMap,
     cashFlow :: Maybe CfMap,
     others :: Maybe FinOthMap
   }
+  deriving (Show)
 
 instance HasField "bal_Sheet_Begin" FinancialReport (Maybe BalanceSheet) where
   getField :: FinancialReport -> Maybe BalanceSheet
@@ -777,6 +787,35 @@ instance HasField "fin_others" FinancialReport (Maybe FinOthers) where
   getField fr =
     fr.others >>= \fo -> return FinOthers {period = fr.period, value = fo}
 
+instance
+  HasField
+    "to_statements"
+    FinancialReport
+    (Maybe BalanceSheet, Maybe BalanceSheet, Maybe ProfitLoss, Maybe CashFlow, Maybe FinOthers)
+  where
+  getField :: FinancialReport -> (Maybe BalanceSheet, Maybe BalanceSheet, Maybe ProfitLoss, Maybe CashFlow, Maybe FinOthers)
+  getField fr = (fr.bal_Sheet_Begin, fr.bal_Sheet_End, fr.profit_loss_Stat, fr.cash_flow_Stat, fr.fin_others)
+
+instance HasField "calcElem" FinancialReport FinancialReport where
+  getField :: FinancialReport -> FinancialReport
+  getField fr =
+    let getHm h = h >>= \x -> return $ calcElem x
+     in FinancialReport
+          { period = fr.period,
+            balanceSheetBegin = getHm fr.balanceSheetBegin,
+            balanceSheetEnd = getHm fr.balanceSheetEnd,
+            profitLoss = getHm fr.profitLoss,
+            cashFlow =
+              calcCashFlow
+                <$> fr.balanceSheetBegin
+                <*> fr.balanceSheetEnd
+                <*> fr.profitLoss
+                <*> (fr.others >>= \x -> x Hm.!? CorporateTaxRate)
+                <*> (fr.others >>= \x -> x Hm.!? GrossProfitTaxRate)
+                <*> (fr.others >>= \x -> x Hm.!? RevenueTaxRate),
+            others = fr.others
+          }
+
 instance HasField "eps" FinancialReport Double where
   getField :: FinancialReport -> Double
   getField _fr = error "Not implemented"
@@ -789,3 +828,90 @@ instance HasField "diluted_eps" FinancialReport (Double -> Double -> Double -> D
 instance HasField "currentRatio" FinancialReport Double where
   getField :: FinancialReport -> Double
   getField _fr = error "Not implemented"
+
+finReportFromStatements :: Maybe BalanceSheet -> Maybe BalanceSheet -> Maybe ProfitLoss -> Maybe CashFlow -> Maybe FinOthers -> Maybe FinancialReport
+finReportFromStatements b0 b1 pl cf fo =
+  pl >>= \plx ->
+    let bs_dt _ (Just x) = (x.date, Just x.value)
+        bs_dt dt Nothing = (dt, Nothing)
+
+        cf_dt _ _ (Just x) = (fst x.period, snd x.period, Just x.value)
+        cf_dt dt0 dt1 Nothing = (dt0, dt1, Nothing)
+
+        (start, end) = plx.period
+        ((dt_b0, b0x), (dt_b1, b1x)) = (bs_dt start b0, bs_dt end b1)
+        (dt_c0, dt_c1, cf_x) = cf_dt start end cf
+        (dt_f0, dt_f1, fo_x) = cf_dt start end fo
+     in if start == dt_b0
+          && end == dt_b1
+          && dt_c0 == start
+          && dt_c1 == end
+          && dt_f0 == start
+          && dt_f1 == end
+          then
+            return
+              FinancialReport
+                { period = (start, end),
+                  balanceSheetBegin = b0x,
+                  balanceSheetEnd = b1x,
+                  profitLoss = Just plx.value,
+                  cashFlow = cf_x,
+                  others = fo_x
+                }
+          else
+            Nothing
+
+checkDates :: [Period] -> Bool
+checkDates v = checker v (fst $ head v)
+  where
+    checker [] _ = True
+    checker ((beg, fin) : zs) dt = beg == dt && fin > dt && checker zs fin
+
+setDatesPeriod :: [Period] -> Maybe (St.Set Day)
+setDatesPeriod pd =
+  let addDates [] ac = ac
+      addDates (x : xs) ac = addDates xs (St.insert (snd x) ac)
+   in if checkDates pd
+        then Just $ addDates pd $ St.singleton $ fst $ head pd
+        else Nothing
+
+data Accounts = Accounts
+  { currency :: F.Currency,
+    consolidated :: Bool,
+    dates :: St.Set Day,
+    balanceSheet :: Bm.Map Day BsMap,
+    profitLoss :: Bm.Map Period PlMap,
+    cashFlow :: Bm.Map Period CfMap,
+    others :: Bm.Map Period FinOthMap
+  }
+  deriving (Show, Generic)
+
+instance HasField "setCashFlow" Accounts Accounts where
+  getField :: Accounts -> Accounts
+  getField ac =
+    let calcCF (d0, d1) cf =
+          let pl = ac.profitLoss Bm.! (d0, d1)
+              oth = (Hm.!) $ ac.others Bm.! (d0, d1)
+           in case (ac.balanceSheet Bm.!? d0, ac.balanceSheet Bm.!? d1) of
+                (Just b0x, Just b1x) ->
+                  Bm.insert (d0, d1) (calcCashFlow b0x b1x pl (oth CorporateTaxRate) (oth GrossProfitTaxRate) (oth RevenueTaxRate)) cf
+                _ -> cf
+        addCF [] cff = cff
+        addCF (pd : xs) cff = addCF xs $ calcCF pd cff
+     in ac & #cashFlow .~ addCF (Bm.keys ac.profitLoss) Bm.empty
+
+accountsfromStatements :: F.Currency -> Bool -> Bm.Map Day BsMap -> Bm.Map Period PlMap -> Bm.Map Period FinOthMap -> Maybe Accounts
+accountsfromStatements cur consol b0 pl fo = do
+  let pd = Bm.keys pl
+  let pds = St.fromList pd
+  dts <- setDatesPeriod pd
+  return $
+    Accounts
+      { currency = cur,
+        consolidated = consol,
+        dates = dts,
+        profitLoss = pl,
+        balanceSheet = Bm.restrictKeys b0 dts,
+        cashFlow = Bm.empty,
+        others = Bm.restrictKeys fo pds
+      }
