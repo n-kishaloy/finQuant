@@ -86,6 +86,10 @@ common common-settings
         , OverloadedStrings
         , DataKinds
         , DeriveAnyClass
+        , DeriveGeneric
+        , TemplateHaskell
+        , FunctionalDependencies
+        , MultiParamTypeClasses
 
 
 library

@@ -3,6 +3,7 @@ module Main (main) where
 import Data.Approx (Approx ((=~)))
 import Data.HashMap.Strict qualified as Hm
 import Data.List (foldl')
+import Data.Maybe (isNothing)
 import Data.Text (Text)
 import Data.Time (Day, fromGregorian)
 import Finance (DayCountConvention (..), yearFrac)
@@ -238,7 +239,20 @@ main = do
       St.debitType Hm.! St.CommonStock == St.EquityEntry,
       St.debitType Hm.! St.DeferredCompensation == St.LiabilityEntry,
       St.debitType Hm.! St.AccumulatedDepreciation == St.AssetContra,
-      Hm.lookup St.LongTermLiabilities St.debitType == Nothing
+      isNothing (Hm.lookup St.LongTermLiabilities St.debitType)
     ]
+
+  let ac1 =
+        St.FinancialReport
+          { profitLoss = Nothing,
+            others = Nothing,
+            cashFlow = Nothing,
+            balanceSheetBegin =
+              Just $
+                Hm.fromList
+                  [(St.Cash, 23.5), (St.Equity, 12.5)],
+            balanceSheetEnd = Nothing,
+            period = (fromGregorian 2009 5 22, fromGregorian 2010 9 27)
+          }
 
   print ("Bye" :: Text)

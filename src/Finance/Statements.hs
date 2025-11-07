@@ -1,5 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
-
 -- | Module      : Finance.Statements
 -- Description : Implement __Statements__ modules for the __finz__ library
 -- Copyright   : (c) 2024 Kishaloy Neogi
@@ -45,36 +43,37 @@ module Finance.Statements
   )
 where
 
-import Control.Lens ((&), (.~))
+import Control.Lens -- (makeFields, (&), (.~))
 import Data.Approx ((=~))
 import Data.Generics.Labels ()
 import Data.HashMap.Strict qualified as Hm
 import Data.HashSet qualified as Hs
 import Data.Hashable (Hashable)
-import Data.List (foldl')
+import Data.List (foldl', intercalate)
 import Data.Map.Strict qualified as Bm
 import Data.Maybe (fromJust)
 import Data.Set qualified as St
-import Data.Time (Day)
+import Data.Time (Day, diffDays)
 import Data.Vector qualified as V
 import Finance (Period)
 import Finance qualified as F
 import GHC.Generics (Generic)
 import GHC.Records (HasField (..))
+import Text.Printf (PrintfArg, formatArg, formatString, printf)
 
 calcNode :: (Hashable a) => Hm.HashMap a Double -> [a] -> [a] -> Double
 calcNode h y0 y1 =
   let adder q = foldl' (\t w -> t + Hm.lookupDefault 0.0 w q) 0.0
    in adder h y0 - adder h y1
 
-finMapAdd :: (Hashable a) => Double -> a -> Hm.HashMap a Double -> Hm.HashMap a Double
-finMapAdd y z h = if y =~ 0.0 then Hm.delete z h else Hm.insert z y h
+finMapAdd :: (Hashable a) => a -> Double -> Hm.HashMap a Double -> Hm.HashMap a Double
+finMapAdd z y h = if y =~ 0.0 then Hm.delete z h else Hm.insert z y h
 
-class (Show a, Eq a, Hashable a, Ord a, Enum a) => FinType a where
+class (Show a, Eq a, Hashable a, Ord a, Enum a, Text.Printf.PrintfArg a) => FinType a where
   -- | @calcElem x h = Calculate and set the derived items in statements@
   --   The calulated elements includes Current Assets, Assets, Equity,
   calcElem :: Hm.HashMap a Double -> Hm.HashMap a Double
-  calcElem p = foldl' (\h (z, (s, t)) -> finMapAdd (calcNode h s t) z h) p calcComb
+  calcElem p = foldl' (\h (z, (s, t)) -> finMapAdd z (calcNode h s t) h) p calcComb
 
   calcComb :: [(a, ([a], [a]))]
 
@@ -110,9 +109,18 @@ class (Show a, Eq a, Hashable a, Ord a, Enum a) => FinType a where
   commonSize :: Double -> Maybe (Hm.HashMap a Double) -> Maybe (Hm.HashMap a Double)
   commonSize xdiv p = p >>= \x -> return $ (/ xdiv) <$> x
 
+  infixl 9 !.
+  (!.) :: Hm.HashMap a Double -> a -> Double
+  (!.) h k = Hm.lookupDefault 0.0 k h
+  {-# INLINE (!.) #-}
+
   infixl 9 !~
-  (!~) :: Hm.HashMap a Double -> a -> Double
-  (!~) h k = Hm.lookupDefault 0.0 k h
+  (!~) :: a -> Double -> Hm.HashMap a Double -> Hm.HashMap a Double
+  (!~) k x h =
+    if isCalc k
+      then error ("Calc item : " ++ show k)
+      else finMapAdd k x h
+  {-# INLINE (!~) #-}
 
 data BsType
   = Cash
@@ -183,6 +191,9 @@ data BsType
   | BalanceSheetCheck
   deriving (Eq, Show, Ord, Generic, Enum, Bounded, Hashable)
 
+instance PrintfArg BsType where
+  formatArg = formatString . show
+
 data PlType
   = OperatingRevenue
   | NonOperatingRevenue
@@ -240,6 +251,9 @@ data PlType
   | TotalComprehensiveIncome
   deriving (Eq, Show, Ord, Generic, Enum, Bounded, Hashable)
 
+instance PrintfArg PlType where
+  formatArg = formatString . show
+
 data CfType
   = ChangeCurrentAssets
   | ChangeLongTermAssets
@@ -274,6 +288,9 @@ data CfType
   | CashFlowDebt
   deriving (Eq, Show, Ord, Generic, Enum, Bounded, Hashable)
 
+instance PrintfArg CfType where
+  formatArg = formatString . show
+
 data FinOthersTyp
   = CorporateTaxRate
   | GrossProfitTaxRate
@@ -283,6 +300,9 @@ data FinOthersTyp
   | DaysOfInventory
   | InventoryTurnoverRatio
   deriving (Eq, Show, Ord, Generic, Enum, Bounded, Hashable)
+
+instance PrintfArg FinOthersTyp where
+  formatArg = formatString . show
 
 instance FinType BsType where
   calcComb :: [(BsType, ([BsType], [BsType]))]
@@ -689,7 +709,7 @@ transactList = foldl' transact
 
 deprTaxAdjust :: PlMap -> Double
 deprTaxAdjust pl = case pl Hm.!? TaxDepreciation of
-  Just x -> pl !~ Depreciation - x
+  Just x -> pl !. Depreciation - x
   _ -> 0.0
 
 -- | Derives the non-calc items of the Cash Flow statement from
@@ -704,15 +724,15 @@ calcCashFlow b0 b1 pl corpTax gpTax revTax =
   let cf0 = bf cfBL $ pf cfPL Hm.empty
         where
           pf [] h = h
-          pf ((z, (s, t)) : xs) h = pf xs (finMapAdd (calcNode pl s t) z h)
+          pf ((z, (s, t)) : xs) h = pf xs (finMapAdd z (calcNode pl s t) h)
 
           bf [] h = h
-          bf ((z, (s, t)) : xs) h = bf xs (finMapAdd (calcNode b1 s t - calcNode b0 s t) z h)
+          bf ((z, (s, t)) : xs) h = bf xs (finMapAdd z (calcNode b1 s t - calcNode b0 s t) h)
 
-      cfInt = cf0 !~ CashFlowInterests
-      ebitTx = corpTax * (pl !~ EBT + cfInt + deprTaxAdjust pl)
-      grTx = gpTax * pl !~ GrossProfit
-      revTx = revTax * pl !~ Revenue
+      cfInt = cf0 !. CashFlowInterests
+      ebitTx = corpTax * (pl !. EBT + cfInt + deprTaxAdjust pl)
+      grTx = gpTax * pl !. GrossProfit
+      revTx = revTax * pl !. Revenue
    in Hm.insert
         CashFlowTaxShield
         (min (corpTax * cfInt) (max 0.0 (ebitTx + grTx - revTx)))
@@ -760,6 +780,8 @@ data FinancialReport = FinancialReport
     others :: Maybe FinOthMap
   }
   deriving (Show)
+
+makeFields ''FinancialReport
 
 instance HasField "bal_Sheet_Begin" FinancialReport (Maybe BalanceSheet) where
   getField :: FinancialReport -> Maybe BalanceSheet
@@ -887,6 +909,8 @@ data Accounts = Accounts
   }
   deriving (Show, Generic)
 
+makeFields ''Accounts
+
 instance HasField "setCashFlow" Accounts Accounts where
   getField :: Accounts -> Accounts
   getField ac =
@@ -900,6 +924,25 @@ instance HasField "setCashFlow" Accounts Accounts where
         addCF [] cff = cff
         addCF (pd : xs) cff = addCF xs $ calcCF pd cff
      in ac & #cashFlow .~ addCF (Bm.keys ac.profitLoss) Bm.empty
+
+instance HasField "splitPeriod" Accounts (St.Set Period, St.Set Period) where
+  getField :: Accounts -> (St.Set Period, St.Set Period)
+  getField ac =
+    let splitter (qt, yr) [] = (qt, yr)
+        splitter (qt, yr) ((d0, d1) : xs) =
+          if diffDays d1 d0 > 120
+            then splitter (qt, St.insert (d0, d1) yr) xs
+            else splitter (St.insert (d0, d1) qt, yr) xs
+     in splitter (St.empty, St.empty) (Bm.keys ac.profitLoss)
+
+instance HasField "calcElem" Accounts Accounts where
+  getField :: Accounts -> Accounts
+  getField ac =
+    ac
+      { balanceSheet = calcElem <$> ac.balanceSheet,
+        profitLoss = calcElem <$> ac.profitLoss,
+        cashFlow = calcElem <$> ac.cashFlow
+      }
 
 instance HasField "getAccount" Accounts (Period -> Maybe FinancialReport) where
   getField :: Accounts -> Period -> Maybe FinancialReport
@@ -918,6 +961,33 @@ instance HasField "getAccount" Accounts (Period -> Maybe FinancialReport) where
 instance HasField "toFinancialReports" Accounts [FinancialReport] where
   getField :: Accounts -> [FinancialReport]
   getField ac = fromJust . ac.getAccount <$> Bm.keys ac.profitLoss
+
+instance HasField "formatTable" Accounts (String -> Double -> String) where
+  getField :: Accounts -> String -> Double -> String
+  getField ac sep mult =
+    intercalate
+      "\n"
+      [ printf "All values are in %s %.0f" (show ac.currency) mult,
+        "result",
+        "here",
+        "\n"
+      ]
+    where
+      printStmt :: (FinType k) => k -> [k] -> [k] -> Bm.Map Day (Hm.HashMap k Double) -> St.Set Day -> String
+      printStmt s d c hx lt = intercalate "" ((`printItm` hx) <$> d) ++ intercalate "" ((`printItm` hx) <$> c) ++ printItm s hx
+        where
+          printItm k h =
+            if sum (abs . (!. k) <$> Bm.elems h) > 0.001
+              then
+                let fz z = case Bm.lookup z h of
+                      Just v ->
+                        let itm = v !. k
+                         in if itm > 0.001 && itm < 1.0
+                              then printf "%8.1f%" (itm * 100.0)
+                              else printf "%9.0f" (itm / mult)
+                      Nothing -> "         " :: String
+                 in printf "%30s" k ++ intercalate sep (fz <$> St.toList lt) ++ "\n"
+              else ""
 
 accountsfromStatements :: F.Currency -> Bool -> Bm.Map Day BsMap -> Bm.Map Period PlMap -> Bm.Map Period FinOthMap -> Maybe Accounts
 accountsfromStatements cur consol b0 pl fo = do
